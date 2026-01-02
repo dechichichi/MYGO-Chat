@@ -1,0 +1,4 @@
+base_url: "xxx"
+token: "your_token_here"
+model_name: "xxx"
+temperature: 0
