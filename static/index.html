@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyGO!!!!! Chat - 迷子でもいい</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            font-family: 'Noto Sans SC', sans-serif;
+        }
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #ec4899;
+            border-radius: 50%;
+            margin: 0 2px;
+            animation: bounce 1.4s infinite ease-in-out;
+        }
+        .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+        .message-enter {
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="text-white">
+    <div id="app" class="min-h-screen flex flex-col">
+        <!-- 顶部导航 -->
+        <header class="bg-black/30 backdrop-blur-sm border-b border-white/10">
+            <div class="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <span class="text-2xl">🎸</span>
+                    <div>
+                        <h1 class="font-bold text-lg">MyGO!!!!! Chat</h1>
+                        <p class="text-xs text-white/50">迷子でもいい、迷子でも進め</p>
+                    </div>
+                </div>
+                <div class="flex bg-white/10 rounded-lg p-1">
+                    <button onclick="switchMode('chat')" id="btn-chat" class="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-pink-500 text-white">
+                        💬 聊天
+                    </button>
+                    <button onclick="switchMode('agent')" id="btn-agent" class="px-4 py-2 rounded-md text-sm font-medium transition-colors text-white/70 hover:text-white">
+                        🤖 Agent
+                    </button>
+                    <button onclick="switchMode('debate')" id="btn-debate" class="px-4 py-2 rounded-md text-sm font-medium transition-colors text-white/70 hover:text-white">
+                        🎤 讨论
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- 主内容区 -->
+        <main class="flex-1 max-w-4xl w-full mx-auto">
+            <div class="h-[calc(100vh-72px)] bg-black/20 backdrop-blur-sm border-x border-white/10">
+                <!-- 聊天视图 -->
+                <div id="chat-view" class="flex flex-col h-full">
+                    <!-- 角色选择 -->
+                    <div class="p-4 border-b border-white/10 bg-black/20">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="flex items-center gap-3">
+                                <span id="current-avatar" class="text-3xl">🎤</span>
+                                <div>
+                                    <h2 id="current-name" class="font-bold text-lg">高松灯</h2>
+                                    <p id="current-name-jp" class="text-sm text-white/60">Takamatsu Tomori</p>
+                                </div>
+                            </div>
+                            <button onclick="clearChat()" class="px-3 py-1.5 text-sm bg-white/10 hover:bg-white/20 rounded-lg transition-colors">
+                                清空对话
+                            </button>
+                        </div>
+                        <div id="char-select" class="flex gap-2 flex-wrap"></div>
+                    </div>
+
+                    <!-- 消息列表 -->
+                    <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-4">
+                        <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center">
+                            <span class="text-6xl mb-4">🎤</span>
+                            <h3 class="text-xl font-bold mb-2">和 高松灯 聊天</h3>
+                            <p class="text-white/60 max-w-md">感性细腻的"羽丘怪女生"，用诗意的语言表达内心</p>
+                            <p class="text-white/40 text-sm mt-4">发送消息开始对话吧</p>
+                        </div>
+                    </div>
+
+                    <!-- 输入框 -->
+                    <div class="p-4 border-t border-white/10 bg-black/20">
+                        <div class="flex gap-3">
+                            <input type="text" id="chat-input" placeholder="对 高松灯 说点什么..."
+                                class="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:border-pink-500 transition-colors"
+                                onkeypress="if(event.key==='Enter')sendMessage()">
+                            <button onclick="sendMessage()" id="send-btn"
+                                class="px-6 py-3 bg-gradient-to-r from-pink-500 to-rose-500 rounded-xl font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
+                                发送
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 讨论视图 -->
+                <div id="debate-view" class="flex flex-col h-full hidden">
+                    <!-- 配置面板 -->
+                    <div id="debate-config" class="p-6 space-y-6 overflow-y-auto">
+                        <div>
+                            <h2 class="text-2xl font-bold mb-2">🎸 乐队讨论会</h2>
+                            <p class="text-white/60">选择话题和参与成员，开始一场讨论</p>
+                        </div>
+
+                        <!-- 预设话题 -->
+                        <div>
+                            <label class="block text-sm font-medium mb-2">预设话题</label>
+                            <div id="preset-topics" class="flex gap-2 flex-wrap"></div>
+                        </div>
+
+                        <!-- 话题输入 -->
+                        <div>
+                            <label class="block text-sm font-medium mb-2">讨论话题</label>
+                            <input type="text" id="debate-topic" value="乐队对我们来说意味着什么？"
+                                class="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:border-pink-500">
+                        </div>
+
+                        <!-- 立场设置 -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-emerald-400">正方立场</label>
+                                <textarea id="pro-stance" rows="2"
+                                    class="w-full bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 resize-none">乐队是我们表达自我、寻找归属的地方</textarea>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-rose-400">反方立场</label>
+                                <textarea id="con-stance" rows="2"
+                                    class="w-full bg-rose-500/10 border border-rose-500/30 rounded-xl px-4 py-3 focus:outline-none focus:border-rose-500 resize-none">乐队让我们学会了面对困难和成长</textarea>
+                            </div>
+                        </div>
+
+                        <!-- 队伍选择 -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-emerald-400">正方成员</label>
+                                <div id="pro-team" class="space-y-2"></div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2 text-rose-400">反方成员</label>
+                                <div id="con-team" class="space-y-2"></div>
+                            </div>
+                        </div>
+
+                        <!-- 开始按钮 -->
+                        <button onclick="startDebate()" id="start-debate-btn"
+                            class="w-full py-4 bg-gradient-to-r from-pink-500 to-rose-500 rounded-xl font-bold text-lg hover:opacity-90 disabled:opacity-50 transition-all">
+                            开始讨论
+                        </button>
+                    </div>
+
+                    <!-- 讨论结果 -->
+                    <div id="debate-result" class="flex flex-col h-full hidden">
+                        <div class="p-4 border-b border-white/10 bg-black/20">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 id="debate-title" class="font-bold"></h3>
+                                    <div class="flex items-center gap-2 mt-1">
+                                        <span id="debate-status" class="px-2 py-0.5 rounded text-xs bg-amber-500">进行中</span>
+                                        <span id="debate-phase" class="text-sm text-white/60"></span>
+                                    </div>
+                                </div>
+                                <button onclick="resetDebate()" class="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors">
+                                    新讨论
+                                </button>
+                            </div>
+                        </div>
+                        <div id="debate-records" class="flex-1 overflow-y-auto p-4 space-y-4"></div>
+                    </div>
+                </div>
+
+                <!-- Agent 视图 -->
+                <div id="agent-view" class="flex flex-col h-full hidden">
+                    <!-- Agent 模式选择 -->
+                    <div class="p-4 border-b border-white/10 bg-black/20">
+                        <div class="flex items-center justify-between mb-4">
+                            <div>
+                                <h2 class="text-xl font-bold">🤖 Agent 模式</h2>
+                                <p class="text-sm text-white/60">体验完整的Agent能力：工具调用、反思机制</p>
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="switchAgentMode('chat')" id="btn-agent-chat" class="px-3 py-1.5 rounded-lg text-sm transition-colors bg-purple-500">
+                                    Agent聊天
+                                </button>
+                                <button onclick="switchAgentMode('discussion')" id="btn-agent-discussion" class="px-3 py-1.5 rounded-lg text-sm transition-colors bg-white/10 hover:bg-white/20">
+                                    主持人讨论
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Agent 聊天模式 -->
+                    <div id="agent-chat-view" class="flex flex-col flex-1">
+                        <!-- 角色和选项 -->
+                        <div class="p-4 border-b border-white/10 bg-black/10">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-3">
+                                    <span id="agent-avatar" class="text-3xl">🎤</span>
+                                    <div>
+                                        <h3 id="agent-name" class="font-bold">高松灯</h3>
+                                        <p class="text-xs text-white/60">Agent模式 - 带工具和反思</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="checkbox" id="enable-tools" checked class="w-4 h-4 accent-purple-500">
+                                        <span class="text-sm">工具调用</span>
+                                    </label>
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="checkbox" id="enable-reflection" checked class="w-4 h-4 accent-purple-500">
+                                        <span class="text-sm">反思机制</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div id="agent-char-select" class="flex gap-2 flex-wrap mt-3"></div>
+                        </div>
+
+                        <!-- Agent 消息列表 -->
+                        <div id="agent-messages" class="flex-1 overflow-y-auto p-4 space-y-4">
+                            <div id="agent-empty-state" class="h-full flex flex-col items-center justify-center text-center">
+                                <span class="text-6xl mb-4">🤖</span>
+                                <h3 class="text-xl font-bold mb-2">Agent 模式</h3>
+                                <p class="text-white/60 max-w-md">体验带有工具调用和反思机制的对话</p>
+                                <div class="mt-4 text-left text-sm text-white/50 max-w-md space-y-2">
+                                    <p>🔧 <b>工具调用</b>: 记忆回忆、歌词搜索、氛围感知</p>
+                                    <p>🪞 <b>反思机制</b>: 自动评估回复质量并优化</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Agent 输入框 -->
+                        <div class="p-4 border-t border-white/10 bg-black/20">
+                            <div class="flex gap-3">
+                                <input type="text" id="agent-input" placeholder="和 Agent 聊聊..."
+                                    class="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:border-purple-500 transition-colors"
+                                    onkeypress="if(event.key==='Enter')sendAgentMessage()">
+                                <button onclick="sendAgentMessage()" id="agent-send-btn"
+                                    class="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-xl font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
+                                    发送
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 主持人讨论模式 -->
+                    <div id="agent-discussion-view" class="flex flex-col flex-1 hidden">
+                        <!-- 配置 -->
+                        <div id="agent-discussion-config" class="p-6 space-y-6 overflow-y-auto">
+                            <div>
+                                <h3 class="text-xl font-bold mb-2">🎭 主持人Agent驱动讨论</h3>
+                                <p class="text-white/60">主持人Agent自主决定发言顺序和内容</p>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium mb-2">讨论话题</label>
+                                <input type="text" id="agent-discussion-topic" value="音乐对我们意味着什么"
+                                    class="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:border-purple-500">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium mb-2">参与成员</label>
+                                <div id="agent-participants" class="flex gap-2 flex-wrap"></div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium mb-2">最大轮数</label>
+                                <input type="number" id="agent-max-rounds" value="4" min="2" max="10"
+                                    class="w-32 bg-white/10 border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:border-purple-500">
+                            </div>
+
+                            <button onclick="startAgentDiscussion()" id="start-agent-discussion-btn"
+                                class="w-full py-4 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-xl font-bold text-lg hover:opacity-90 disabled:opacity-50 transition-all">
+                                开始主持人讨论
+                            </button>
+                        </div>
+
+                        <!-- 讨论结果 -->
+                        <div id="agent-discussion-result" class="flex flex-col h-full hidden">
+                            <div class="p-4 border-b border-white/10 bg-black/20">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <h3 id="agent-discussion-title" class="font-bold"></h3>
+                                        <p class="text-sm text-white/60">主持人Agent自主驱动</p>
+                                    </div>
+                                    <button onclick="resetAgentDiscussion()" class="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors">
+                                        新讨论
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- 决策记录 -->
+                            <div id="agent-decisions" class="p-3 border-b border-white/10 bg-purple-500/10 text-sm overflow-x-auto">
+                                <span class="text-white/60">主持人决策: </span>
+                                <span id="agent-decisions-list"></span>
+                            </div>
+                            <div id="agent-discussion-records" class="flex-1 overflow-y-auto p-4 space-y-4"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // 角色数据
+        const PHILOSOPHERS = [
+            { type: 'tomori', name: '高松灯', nameJp: 'Takamatsu Tomori', role: '主唱', avatar: '🎤', description: '感性细腻的"羽丘怪女生"，用诗意的语言表达内心' },
+            { type: 'anon', name: '千早爱音', nameJp: 'Chihaya Anon', role: '吉他', avatar: '🎸', description: '元气满满的优等生，想要闪闪发光' },
+            { type: 'rana', name: '要乐奈', nameJp: 'Kaname Rana', role: '鼓手', avatar: '🥁', description: '神出鬼没的古怪少女，觉得一切都很有趣' },
+            { type: 'soyo', name: '长崎素世', nameJp: 'Nagasaki Soyo', role: '贝斯', avatar: '🎻', description: '温柔的大姐姐，内心渴望真正的连接' },
+            { type: 'taki', name: '椎名立希', nameJp: 'Shiina Taki', role: '吉他', avatar: '🎵', description: '傲娇的独狼，嘴硬心软的乐队实际领导者' },
+        ];
+
+        const PRESET_TOPICS = [
+            { topic: '乐队对我们来说意味着什么？', proStance: '乐队是我们表达自我、寻找归属的地方', conStance: '乐队让我们学会了面对困难和成长' },
+            { topic: '迷茫的时候应该怎么办？', proStance: '迷茫时应该停下来倾听内心的声音', conStance: '迷茫时应该继续前进，在行动中找到方向' },
+            { topic: '友情和梦想哪个更重要？', proStance: '友情是支撑我们追逐梦想的力量', conStance: '梦想是让友情更有意义的目标' },
+        ];
+
+        // 状态
+        let currentMode = 'chat';
+        let currentChar = 'tomori';
+        let sessionId = 'session_' + Date.now();
+        let messages = [];
+        let isLoading = false;
+        let proTeam = ['tomori', 'anon'];
+        let conTeam = ['taki', 'soyo'];
+        let debateId = null;
+        let pollTimer = null;
+
+        // 初始化
+        function init() {
+            renderCharSelect();
+            renderPresetTopics();
+            renderTeamSelect();
+        }
+
+        // 切换模式
+        function switchMode(mode) {
+            currentMode = mode;
+            document.getElementById('chat-view').classList.toggle('hidden', mode !== 'chat');
+            document.getElementById('debate-view').classList.toggle('hidden', mode !== 'debate');
+            document.getElementById('agent-view').classList.toggle('hidden', mode !== 'agent');
+            
+            ['chat', 'debate', 'agent'].forEach(m => {
+                const btn = document.getElementById(`btn-${m}`);
+                btn.classList.toggle('bg-pink-500', mode === m);
+                btn.classList.toggle('text-white/70', mode !== m);
+            });
+            
+            if (mode === 'agent') {
+                renderAgentCharSelect();
+                renderAgentParticipants();
+            }
+        }
+
+        // 渲染角色选择
+        function renderCharSelect() {
+            const container = document.getElementById('char-select');
+            container.innerHTML = PHILOSOPHERS.map(p => `
+                <button onclick="selectChar('${p.type}')" 
+                    class="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${currentChar === p.type ? 'bg-pink-500' : 'bg-white/10 hover:bg-white/20'}">
+                    <span>${p.avatar}</span>
+                    <span>${p.name}</span>
+                </button>
+            `).join('');
+        }
+
+        // 选择角色
+        function selectChar(type) {
+            currentChar = type;
+            const char = PHILOSOPHERS.find(p => p.type === type);
+            document.getElementById('current-avatar').textContent = char.avatar;
+            document.getElementById('current-name').textContent = char.name;
+            document.getElementById('current-name-jp').textContent = char.nameJp;
+            document.getElementById('chat-input').placeholder = `对 ${char.name} 说点什么...`;
+            
+            // 更新空状态
+            const emptyState = document.getElementById('empty-state');
+            if (emptyState) {
+                emptyState.innerHTML = `
+                    <span class="text-6xl mb-4">${char.avatar}</span>
+                    <h3 class="text-xl font-bold mb-2">和 ${char.name} 聊天</h3>
+                    <p class="text-white/60 max-w-md">${char.description}</p>
+                    <p class="text-white/40 text-sm mt-4">发送消息开始对话吧</p>
+                `;
+            }
+            
+            clearChat();
+            renderCharSelect();
+        }
+
+        // 发送消息
+        async function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const content = input.value.trim();
+            if (!content || isLoading) return;
+
+            input.value = '';
+            isLoading = true;
+            document.getElementById('send-btn').disabled = true;
+
+            // 添加用户消息
+            addMessage('user', content);
+
+            // 显示加载指示器
+            showTypingIndicator();
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        message: content,
+                        philosopher: currentChar,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('请求失败');
+
+                const data = await response.json();
+                hideTypingIndicator();
+                addMessage('assistant', data.response, data.philosopher, data.emotion_level, data.critical_hit);
+            } catch (error) {
+                console.error('Chat error:', error);
+                hideTypingIndicator();
+                addMessage('assistant', '抱歉，系统暂时出了点问题...迷子でもいい，但现在真的连不上了。');
+            } finally {
+                isLoading = false;
+                document.getElementById('send-btn').disabled = false;
+            }
+        }
+
+        // 添加消息
+        function addMessage(role, content, philosopher = '', emotionLevel = '', criticalHit = false) {
+            const container = document.getElementById('messages');
+            const emptyState = document.getElementById('empty-state');
+            if (emptyState) emptyState.remove();
+
+            const char = PHILOSOPHERS.find(p => p.type === currentChar);
+            const isUser = role === 'user';
+
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message-enter flex ${isUser ? 'justify-end' : 'justify-start'}`;
+            
+            let emotionBadge = '';
+            if (emotionLevel && emotionLevel !== 'neutral') {
+                const emotionLabels = { pain: '😢 痛苦', confusion: '😵 迷茫', complaint: '😤 抱怨', excuse: '😏 找借口' };
+                emotionBadge = `<span class="text-xs px-2 py-0.5 rounded bg-white/10 text-white/60">${emotionLabels[emotionLevel] || emotionLevel}</span>`;
+            }
+            
+            let criticalBadge = criticalHit ? '<span class="text-xs px-2 py-0.5 rounded bg-red-500/30 text-red-300">💥 Critical Hit!</span>' : '';
+
+            msgDiv.innerHTML = `
+                <div class="max-w-[80%] ${isUser ? 'bg-pink-500/20 border-pink-500/30' : 'bg-white/10 border-white/20'} border rounded-2xl px-4 py-3">
+                    ${!isUser ? `<div class="flex items-center gap-2 mb-2">
+                        <span>${char.avatar}</span>
+                        <span class="font-medium text-sm">${char.name}</span>
+                        ${emotionBadge}
+                        ${criticalBadge}
+                    </div>` : ''}
+                    <p class="whitespace-pre-wrap leading-relaxed">${content}</p>
+                </div>
+            `;
+
+            container.appendChild(msgDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // 显示加载指示器
+        function showTypingIndicator() {
+            const container = document.getElementById('messages');
+            const indicator = document.createElement('div');
+            indicator.id = 'typing-indicator';
+            indicator.className = 'flex items-center gap-2 text-white/60';
+            indicator.innerHTML = `
+                <div class="typing-indicator">
+                    <span></span><span></span><span></span>
+                </div>
+                <span>正在思考...</span>
+            `;
+            container.appendChild(indicator);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // 隐藏加载指示器
+        function hideTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) indicator.remove();
+        }
+
+        // 清空对话
+        function clearChat() {
+            messages = [];
+            sessionId = 'session_' + Date.now();
+            const container = document.getElementById('messages');
+            const char = PHILOSOPHERS.find(p => p.type === currentChar);
+            container.innerHTML = `
+                <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center">
+                    <span class="text-6xl mb-4">${char.avatar}</span>
+                    <h3 class="text-xl font-bold mb-2">和 ${char.name} 聊天</h3>
+                    <p class="text-white/60 max-w-md">${char.description}</p>
+                    <p class="text-white/40 text-sm mt-4">发送消息开始对话吧</p>
+                </div>
+            `;
+        }
+
+        // ==================== 讨论模式 ====================
+
+        // 渲染预设话题
+        function renderPresetTopics() {
+            const container = document.getElementById('preset-topics');
+            container.innerHTML = PRESET_TOPICS.map((p, i) => `
+                <button onclick="selectPreset(${i})" class="px-3 py-1.5 rounded-lg text-sm transition-colors bg-white/10 hover:bg-white/20">
+                    ${p.topic}
+                </button>
+            `).join('');
+        }
+
+        // 选择预设话题
+        function selectPreset(index) {
+            const preset = PRESET_TOPICS[index];
+            document.getElementById('debate-topic').value = preset.topic;
+            document.getElementById('pro-stance').value = preset.proStance;
+            document.getElementById('con-stance').value = preset.conStance;
+        }
+
+        // 渲染队伍选择
+        function renderTeamSelect() {
+            const proContainer = document.getElementById('pro-team');
+            const conContainer = document.getElementById('con-team');
+
+            proContainer.innerHTML = PHILOSOPHERS.map(p => `
+                <button onclick="toggleTeam('pro', '${p.type}')"
+                    class="w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${proTeam.includes(p.type) ? 'bg-emerald-500/30 border border-emerald-500' : 'bg-white/5 border border-white/10 hover:bg-white/10'}">
+                    <span>${p.avatar}</span>
+                    <span>${p.name}</span>
+                </button>
+            `).join('');
+
+            conContainer.innerHTML = PHILOSOPHERS.map(p => `
+                <button onclick="toggleTeam('con', '${p.type}')"
+                    class="w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${conTeam.includes(p.type) ? 'bg-rose-500/30 border border-rose-500' : 'bg-white/5 border border-white/10 hover:bg-white/10'}">
+                    <span>${p.avatar}</span>
+                    <span>${p.name}</span>
+                </button>
+            `).join('');
+        }
+
+        // 切换队伍成员
+        function toggleTeam(team, member) {
+            if (team === 'pro') {
+                if (proTeam.includes(member)) {
+                    if (proTeam.length > 1) proTeam = proTeam.filter(m => m !== member);
+                } else {
+                    proTeam.push(member);
+                    conTeam = conTeam.filter(m => m !== member);
+                }
+            } else {
+                if (conTeam.includes(member)) {
+                    if (conTeam.length > 1) conTeam = conTeam.filter(m => m !== member);
+                } else {
+                    conTeam.push(member);
+                    proTeam = proTeam.filter(m => m !== member);
+                }
+            }
+            renderTeamSelect();
+        }
+
+        // 开始讨论
+        async function startDebate() {
+            const topic = document.getElementById('debate-topic').value;
+            const proStance = document.getElementById('pro-stance').value;
+            const conStance = document.getElementById('con-stance').value;
+
+            document.getElementById('start-debate-btn').disabled = true;
+            document.getElementById('start-debate-btn').textContent = '启动中...';
+
+            try {
+                const response = await fetch('/api/debate/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        topic,
+                        pro_stance: proStance,
+                        con_stance: conStance,
+                        pro_philosophers: proTeam,
+                        con_philosophers: conTeam,
+                        async: true,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('请求失败');
+
+                const data = await response.json();
+                debateId = data.id;
+
+                // 显示结果面板
+                document.getElementById('debate-config').classList.add('hidden');
+                document.getElementById('debate-result').classList.remove('hidden');
+                document.getElementById('debate-title').textContent = topic;
+
+                // 开始轮询
+                pollDebateStatus();
+            } catch (error) {
+                console.error('Debate error:', error);
+                alert('启动讨论失败');
+                document.getElementById('start-debate-btn').disabled = false;
+                document.getElementById('start-debate-btn').textContent = '开始讨论';
+            }
+        }
+
+        // 轮询讨论状态
+        async function pollDebateStatus() {
+            try {
+                const response = await fetch(`/api/debate/status?id=${debateId}`);
+                if (!response.ok) throw new Error('查询失败');
+
+                const data = await response.json();
+                updateDebateUI(data);
+
+                if (data.status === 'running' || data.status === 'pending') {
+                    pollTimer = setTimeout(pollDebateStatus, 2000);
+                }
+            } catch (error) {
+                console.error('Poll error:', error);
+            }
+        }
+
+        // 更新讨论 UI
+        function updateDebateUI(data) {
+            const statusEl = document.getElementById('debate-status');
+            const phaseEl = document.getElementById('debate-phase');
+            const recordsEl = document.getElementById('debate-records');
+
+            // 更新状态
+            const statusLabels = { pending: '等待中', running: '进行中', completed: '已完成', failed: '失败' };
+            const statusColors = { pending: 'bg-gray-500', running: 'bg-amber-500', completed: 'bg-emerald-500', failed: 'bg-red-500' };
+            statusEl.textContent = statusLabels[data.status] || data.status;
+            statusEl.className = `px-2 py-0.5 rounded text-xs ${statusColors[data.status] || 'bg-gray-500'}`;
+
+            // 更新阶段
+            const phaseLabels = { opening: '开场发言', questioning: '质询交锋', free_debate: '自由辩论', closing: '总结陈词' };
+            phaseEl.textContent = data.current_phase ? `当前阶段: ${phaseLabels[data.current_phase] || data.current_phase}` : '';
+
+            // 更新记录 (API 返回大写字段名，需要兼容)
+            if (data.records && data.records.length > 0) {
+                const phaseColors = { opening: 'bg-emerald-500', questioning: 'bg-amber-500', free_debate: 'bg-blue-500', closing: 'bg-pink-500' };
+                recordsEl.innerHTML = data.records.map(record => {
+                    // 兼容大写和小写字段名
+                    const phase = record.Phase || record.phase || '';
+                    const speakerName = record.SpeakerName || record.speaker_name || '';
+                    const content = record.Content || record.content || '';
+                    return `
+                    <div class="bg-white/5 rounded-xl p-4 message-enter">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="px-2 py-0.5 rounded text-xs ${phaseColors[phase] || 'bg-gray-500'}">${phaseLabels[phase] || phase}</span>
+                            <span class="font-bold">${speakerName}</span>
+                        </div>
+                        <p class="text-white/80 whitespace-pre-wrap leading-relaxed">${content}</p>
+                    </div>
+                `}).join('');
+                recordsEl.scrollTop = recordsEl.scrollHeight;
+            }
+        }
+
+        // 重置讨论
+        function resetDebate() {
+            if (pollTimer) clearTimeout(pollTimer);
+            debateId = null;
+            document.getElementById('debate-config').classList.remove('hidden');
+            document.getElementById('debate-result').classList.add('hidden');
+            document.getElementById('debate-records').innerHTML = '';
+            document.getElementById('start-debate-btn').disabled = false;
+            document.getElementById('start-debate-btn').textContent = '开始讨论';
+        }
+
+        // ==================== Agent 模式 ====================
+        let agentChar = 'tomori';
+        let agentSessionId = 'agent_' + Date.now();
+        let agentParticipants = ['tomori', 'anon'];
+        let agentMode = 'chat';
+
+        // 切换 Agent 子模式
+        function switchAgentMode(mode) {
+            agentMode = mode;
+            document.getElementById('agent-chat-view').classList.toggle('hidden', mode !== 'chat');
+            document.getElementById('agent-discussion-view').classList.toggle('hidden', mode !== 'discussion');
+            document.getElementById('btn-agent-chat').classList.toggle('bg-purple-500', mode === 'chat');
+            document.getElementById('btn-agent-chat').classList.toggle('bg-white/10', mode !== 'chat');
+            document.getElementById('btn-agent-discussion').classList.toggle('bg-purple-500', mode === 'discussion');
+            document.getElementById('btn-agent-discussion').classList.toggle('bg-white/10', mode !== 'discussion');
+        }
+
+        // 渲染 Agent 角色选择
+        function renderAgentCharSelect() {
+            const container = document.getElementById('agent-char-select');
+            container.innerHTML = PHILOSOPHERS.map(p => `
+                <button onclick="selectAgentChar('${p.type}')" 
+                    class="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${agentChar === p.type ? 'bg-purple-500' : 'bg-white/10 hover:bg-white/20'}">
+                    <span>${p.avatar}</span>
+                    <span>${p.name}</span>
+                </button>
+            `).join('');
+        }
+
+        // 选择 Agent 角色
+        function selectAgentChar(type) {
+            agentChar = type;
+            const char = PHILOSOPHERS.find(p => p.type === type);
+            document.getElementById('agent-avatar').textContent = char.avatar;
+            document.getElementById('agent-name').textContent = char.name;
+            agentSessionId = 'agent_' + Date.now();
+            document.getElementById('agent-messages').innerHTML = `
+                <div id="agent-empty-state" class="h-full flex flex-col items-center justify-center text-center">
+                    <span class="text-6xl mb-4">🤖</span>
+                    <h3 class="text-xl font-bold mb-2">Agent 模式 - ${char.name}</h3>
+                    <p class="text-white/60 max-w-md">体验带有工具调用和反思机制的对话</p>
+                </div>
+            `;
+            renderAgentCharSelect();
+        }
+
+        // 发送 Agent 消息
+        async function sendAgentMessage() {
+            const input = document.getElementById('agent-input');
+            const content = input.value.trim();
+            if (!content || isLoading) return;
+
+            input.value = '';
+            isLoading = true;
+            document.getElementById('agent-send-btn').disabled = true;
+
+            // 添加用户消息
+            addAgentMessage('user', content);
+            showAgentTypingIndicator();
+
+            try {
+                const response = await fetch('/api/agent/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: agentSessionId,
+                        message: content,
+                        philosopher: agentChar,
+                        enable_tools: document.getElementById('enable-tools').checked,
+                        enable_reflection: document.getElementById('enable-reflection').checked,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('请求失败');
+
+                const data = await response.json();
+                hideAgentTypingIndicator();
+                addAgentMessage('assistant', data.response, data.philosopher, data.emotion_level, data.tool_results, data.reflection_result);
+            } catch (error) {
+                console.error('Agent chat error:', error);
+                hideAgentTypingIndicator();
+                addAgentMessage('assistant', '抱歉，Agent 暂时出了点问题...');
+            } finally {
+                isLoading = false;
+                document.getElementById('agent-send-btn').disabled = false;
+            }
+        }
+
+        // 添加 Agent 消息
+        function addAgentMessage(role, content, philosopher = '', emotionLevel = '', toolResults = [], reflectionResult = null) {
+            const container = document.getElementById('agent-messages');
+            const emptyState = document.getElementById('agent-empty-state');
+            if (emptyState) emptyState.remove();
+
+            const char = PHILOSOPHERS.find(p => p.type === agentChar);
+            const isUser = role === 'user';
+
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message-enter flex ${isUser ? 'justify-end' : 'justify-start'}`;
+            
+            // 工具调用信息
+            let toolInfo = '';
+            if (toolResults && toolResults.length > 0) {
+                toolInfo = `<div class="mt-2 p-2 bg-purple-500/20 rounded-lg text-xs">
+                    <div class="font-bold text-purple-300 mb-1">🔧 工具调用:</div>
+                    ${toolResults.map(t => `<div class="text-white/70">• ${t.tool_name}</div>`).join('')}
+                </div>`;
+            }
+
+            // 反思信息
+            let reflectionInfo = '';
+            if (reflectionResult) {
+                const score = reflectionResult.confidence_score ? (reflectionResult.confidence_score * 100).toFixed(0) : '?';
+                reflectionInfo = `<div class="mt-2 p-2 bg-indigo-500/20 rounded-lg text-xs">
+                    <div class="font-bold text-indigo-300 mb-1">🪞 反思结果: 置信度 ${score}%</div>
+                    ${reflectionResult.suggestions ? reflectionResult.suggestions.slice(0, 2).map(s => `<div class="text-white/70 truncate">• ${s}</div>`).join('') : ''}
+                </div>`;
+            }
+
+            let emotionBadge = '';
+            if (emotionLevel && emotionLevel !== 'neutral') {
+                const emotionLabels = { pain: '😢 痛苦', confused: '😵 迷茫', complaining: '😤 抱怨', excusing: '😏 找借口' };
+                emotionBadge = `<span class="text-xs px-2 py-0.5 rounded bg-white/10 text-white/60">${emotionLabels[emotionLevel] || emotionLevel}</span>`;
+            }
+
+            msgDiv.innerHTML = `
+                <div class="max-w-[85%] ${isUser ? 'bg-purple-500/20 border-purple-500/30' : 'bg-white/10 border-white/20'} border rounded-2xl px-4 py-3">
+                    ${!isUser ? `<div class="flex items-center gap-2 mb-2">
+                        <span>${char.avatar}</span>
+                        <span class="font-medium text-sm">${char.name}</span>
+                        <span class="text-xs px-2 py-0.5 rounded bg-purple-500/30 text-purple-300">Agent</span>
+                        ${emotionBadge}
+                    </div>` : ''}
+                    <p class="whitespace-pre-wrap leading-relaxed">${content}</p>
+                    ${toolInfo}
+                    ${reflectionInfo}
+                </div>
+            `;
+
+            container.appendChild(msgDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function showAgentTypingIndicator() {
+            const container = document.getElementById('agent-messages');
+            const indicator = document.createElement('div');
+            indicator.id = 'agent-typing-indicator';
+            indicator.className = 'flex items-center gap-2 text-white/60';
+            indicator.innerHTML = `
+                <div class="typing-indicator">
+                    <span></span><span></span><span></span>
+                </div>
+                <span>Agent 思考中...</span>
+            `;
+            container.appendChild(indicator);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function hideAgentTypingIndicator() {
+            const indicator = document.getElementById('agent-typing-indicator');
+            if (indicator) indicator.remove();
+        }
+
+        // 渲染主持人讨论参与者选择
+        function renderAgentParticipants() {
+            const container = document.getElementById('agent-participants');
+            container.innerHTML = PHILOSOPHERS.map(p => `
+                <button onclick="toggleAgentParticipant('${p.type}')"
+                    class="flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${agentParticipants.includes(p.type) ? 'bg-purple-500' : 'bg-white/10 hover:bg-white/20'}">
+                    <span>${p.avatar}</span>
+                    <span>${p.name}</span>
+                </button>
+            `).join('');
+        }
+
+        function toggleAgentParticipant(type) {
+            if (agentParticipants.includes(type)) {
+                if (agentParticipants.length > 2) {
+                    agentParticipants = agentParticipants.filter(p => p !== type);
+                }
+            } else {
+                agentParticipants.push(type);
+            }
+            renderAgentParticipants();
+        }
+
+        // 开始主持人讨论
+        async function startAgentDiscussion() {
+            const topic = document.getElementById('agent-discussion-topic').value;
+            const maxRounds = parseInt(document.getElementById('agent-max-rounds').value) || 4;
+
+            document.getElementById('start-agent-discussion-btn').disabled = true;
+            document.getElementById('start-agent-discussion-btn').textContent = '讨论进行中...';
+
+            try {
+                const response = await fetch('/api/agent/discussion', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        topic,
+                        participants: agentParticipants,
+                        max_rounds: maxRounds,
+                    }),
+                });
+
+                if (!response.ok) throw new Error('请求失败');
+
+                const data = await response.json();
+                
+                // 显示结果
+                document.getElementById('agent-discussion-config').classList.add('hidden');
+                document.getElementById('agent-discussion-result').classList.remove('hidden');
+                document.getElementById('agent-discussion-title').textContent = topic;
+
+                // 显示决策
+                if (data.decisions && data.decisions.length > 0) {
+                    document.getElementById('agent-decisions-list').innerHTML = data.decisions.map(d => 
+                        `<span class="inline-block px-2 py-0.5 rounded bg-purple-500/30 mr-1 mb-1">${d.action} → ${d.next_speaker}</span>`
+                    ).join('');
+                }
+
+                // 显示记录
+                const recordsEl = document.getElementById('agent-discussion-records');
+                const phaseLabels = { opening: '开场发言', questioning: '质询交锋', free_debate: '自由辩论', closing: '总结陈词' };
+                const phaseColors = { opening: 'bg-emerald-500', questioning: 'bg-amber-500', free_debate: 'bg-blue-500', closing: 'bg-pink-500' };
+                
+                recordsEl.innerHTML = data.records.map(record => {
+                    const phase = record.phase || '';
+                    const speakerName = record.speaker_name || '';
+                    const content = record.content || '';
+                    return `
+                        <div class="bg-white/5 rounded-xl p-4 message-enter">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="px-2 py-0.5 rounded text-xs ${phaseColors[phase] || 'bg-gray-500'}">${phaseLabels[phase] || phase}</span>
+                                <span class="font-bold">${speakerName}</span>
+                            </div>
+                            <p class="text-white/80 whitespace-pre-wrap leading-relaxed">${content}</p>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                console.error('Agent discussion error:', error);
+                alert('主持人讨论失败: ' + error.message);
+            } finally {
+                document.getElementById('start-agent-discussion-btn').disabled = false;
+                document.getElementById('start-agent-discussion-btn').textContent = '开始主持人讨论';
+            }
+        }
+
+        function resetAgentDiscussion() {
+            document.getElementById('agent-discussion-config').classList.remove('hidden');
+            document.getElementById('agent-discussion-result').classList.add('hidden');
+            document.getElementById('agent-discussion-records').innerHTML = '';
+            document.getElementById('agent-decisions-list').innerHTML = '';
+        }
+
+        // 初始化
+        init();
+    </script>
+</body>
+</html>

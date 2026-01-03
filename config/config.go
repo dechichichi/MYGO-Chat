@@ -7,16 +7,17 @@ import (
 )
 
 type Config struct {
-	BaseURL     string  `yaml:"base_url"`
-	Token       string  `yaml:"token"`
-	ModelName   string  `yaml:"model_name"`
-	Temperature float64 `yaml:"temperature"`
+	BaseURL     string  `yaml:"base_url" mapstructure:"base_url"`
+	Token       string  `yaml:"token" mapstructure:"token"`
+	ModelName   string  `yaml:"model_name" mapstructure:"model_name"`
+	Temperature float64 `yaml:"temperature" mapstructure:"temperature"`
 }
 
 func LoadConfig() (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(".")
+	viper.AddConfigPath("./config")
 	if err := viper.ReadInConfig(); err != nil {
 		log.Error().Err(err).Msg("Error reading config file")
 		return nil, errors.New("Error reading config file: " + err.Error())
