@@ -495,7 +495,12 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 创建 Agent
-	agent := philosopher.NewAgent(req.Philosopher, s.model, agentConfig)
+	agent, err := philosopher.NewAgent(req.Philosopher, s.model, agentConfig)
+	if err != nil {
+		log.Error().Err(err).Msg("创建 Agent 失败")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	// 获取历史消息
 	session := s.getOrCreateSession(req.SessionID, req.Philosopher)

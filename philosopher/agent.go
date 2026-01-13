@@ -25,6 +25,7 @@ type Agent struct {
 	ReflectionEngine *ReflectionEngine
 	Evaluator        *SelfEvaluator
 	Refiner          *IterativeRefiner
+	MemoryManager    *MemoryManager // 记忆管理器
 
 	// 配置
 	EnableTools      bool // 是否启用工具调用
@@ -39,6 +40,7 @@ type AgentConfig struct {
 	EnableReflection bool
 	EnableRefinement bool
 	MaxToolCalls     int
+	MemoryStorePath  string // SQLite 数据库路径
 }
 
 // DefaultAgentConfig 默认配置
@@ -48,17 +50,26 @@ func DefaultAgentConfig() *AgentConfig {
 		EnableReflection: true,
 		EnableRefinement: false, // 默认关闭迭代优化（消耗较大）
 		MaxToolCalls:     3,
+		MemoryStorePath:  "./memories.db",
 	}
 }
 
 // NewAgent 创建完整的 Agent
-func NewAgent(pType PhilosopherType, model *config.ChatModel, cfg *AgentConfig) *Agent {
+func NewAgent(pType PhilosopherType, model *config.ChatModel, cfg *AgentConfig) (*Agent, error) {
 	if cfg == nil {
 		cfg = DefaultAgentConfig()
 	}
 
 	prompts := GetPhilosopherPrompts()
 	prompt := prompts[pType]
+
+	// 创建持久化记忆存储
+	store, err := NewSQLiteMemoryStore(cfg.MemoryStorePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memory store: %w", err)
+	}
+
+	memoryManager := NewMemoryManager(store)
 
 	agent := &Agent{
 		Type:   pType,
@@ -68,21 +79,21 @@ func NewAgent(pType PhilosopherType, model *config.ChatModel, cfg *AgentConfig) 
 		Context: &AgentContext{
 			PhilosopherType: pType,
 			PhilosopherName: prompt.Name,
-			ShortTermMemory: []MemoryItem{},
-			LongTermMemory:  []MemoryItem{},
 			CurrentMood:     "neutral",
+			MemoryManager:   memoryManager,
 		},
 		EmotionAnalyzer:  NewEmotionAnalyzer(model),
 		ReflectionEngine: NewReflectionEngine(model),
 		Evaluator:        NewSelfEvaluator(model),
 		Refiner:          NewIterativeRefiner(model),
+		MemoryManager:    memoryManager,
 		EnableTools:      cfg.EnableTools,
 		EnableReflection: cfg.EnableReflection,
 		EnableRefinement: cfg.EnableRefinement,
 		MaxToolCalls:     cfg.MaxToolCalls,
 	}
 
-	return agent
+	return agent, nil
 }
 
 // Chat Agent 的主对话方法
@@ -131,12 +142,15 @@ func (a *Agent) Chat(userMessage string, history []config.Message) (*AgentRespon
 			response, a.Type, a.Context, userMessage)
 	}
 
-	// 8. 保存对话到短期记忆
-	a.Context.ShortTermMemory = append(a.Context.ShortTermMemory, MemoryItem{
-		Type:       "event",
-		Content:    fmt.Sprintf("用户说：%s", userMessage),
-		Importance: 0.5,
-	})
+	// 8. 保存对话到记忆系统（持久化）
+	if a.MemoryManager != nil && a.Context.SessionID != "" {
+		// 使用新的持久化记忆系统保存对话
+		err := a.MemoryManager.SaveConversation(a.Context.SessionID, a.Context.PhilosopherName, userMessage, response)
+		if err != nil {
+			// 记录错误但继续流程
+			fmt.Printf("保存记忆失败: %v\n", err)
+		}
+	}
 
 	return &AgentResponse{
 		Content:          response,
@@ -232,26 +246,36 @@ func (a *Agent) buildEmotionGuidance(level EmotionLevel) string {
 
 // buildMemoryContext 构建记忆上下文
 func (a *Agent) buildMemoryContext() string {
-	if len(a.Context.LongTermMemory) == 0 && len(a.Context.ShortTermMemory) == 0 {
+	// 检查是否启用了记忆系统
+	if a.MemoryManager == nil || a.Context.SessionID == "" {
 		return ""
 	}
 
 	context := "\n\n【记忆提示】\n"
 
-	// 长期记忆（重要的）
-	if len(a.Context.LongTermMemory) > 0 {
-		context += "你记得关于这位用户的一些事情：\n"
-		for i, m := range a.Context.LongTermMemory {
-			if i >= 3 {
-				break
-			}
-			context += fmt.Sprintf("- %s\n", m.Content)
-		}
+	// 获取记忆统计
+	stats, err := a.MemoryManager.GetMemoryStats(a.Context.SessionID)
+	if err != nil {
+		// 无法获取统计信息，返回空
+		return ""
 	}
 
-	// 短期记忆摘要
-	if len(a.Context.ShortTermMemory) > 5 {
-		context += fmt.Sprintf("\n这次对话已经进行了 %d 轮。\n", len(a.Context.ShortTermMemory)/2)
+	// 显示记忆统计
+	context += fmt.Sprintf("与这位用户已有 %d 次对话记录（%d 条长期记忆）。\n",
+		stats.RecentActivity, stats.LongTermCount)
+
+	// 获取最近的对话历史
+	if stats.RecentActivity > 0 {
+		recentMemories, err := a.MemoryManager.GetConversationHistory(a.Context.SessionID, a.Context.PhilosopherName, 3)
+		if err == nil && len(recentMemories) > 0 {
+			context += "最近的对话：\n"
+			for i, memory := range recentMemories {
+				if i >= 2 { // 最多显示2条
+					break
+				}
+				context += fmt.Sprintf("- %s\n", memory.Content)
+			}
+		}
 	}
 
 	return context
@@ -337,28 +361,63 @@ func (a *Agent) SetUserID(userID string) {
 	a.Context.UserID = userID
 }
 
-// LoadMemory 加载记忆（从外部存储）
-func (a *Agent) LoadMemory(longTerm, shortTerm []MemoryItem) {
-	a.Context.LongTermMemory = longTerm
-	a.Context.ShortTermMemory = shortTerm
+// SetSessionID 设置会话 ID（用于区分不同会话的记忆）
+func (a *Agent) SetSessionID(sessionID string) {
+	a.Context.SessionID = sessionID
 }
 
-// ExportMemory 导出记忆（用于持久化）
-func (a *Agent) ExportMemory() (longTerm, shortTerm []MemoryItem) {
-	return a.Context.LongTermMemory, a.Context.ShortTermMemory
+// LoadMemory 加载记忆（从外部存储）- 已废弃，使用持久化记忆系统
+func (a *Agent) LoadMemory(longTerm, shortTerm []interface{}) {
+	// 已废弃，记忆现在通过持久化系统自动管理
+}
+
+// ExportMemory 导出记忆（用于持久化）- 已废弃，使用持久化记忆系统
+func (a *Agent) ExportMemory() (longTerm, shortTerm []interface{}) {
+	// 已废弃，记忆现在通过持久化系统自动管理
+	return nil, nil
 }
 
 // GetMemoryJSON 获取记忆的 JSON 格式
 func (a *Agent) GetMemoryJSON() (string, error) {
+	if a.MemoryManager == nil || a.Context.SessionID == "" {
+		return "{}", nil
+	}
+
+	// 获取记忆统计
+	stats, err := a.MemoryManager.GetMemoryStats(a.Context.SessionID)
+	if err != nil {
+		return "{}", err
+	}
+
+	// 获取最近的记忆
+	recentMemories, _ := a.MemoryManager.GetConversationHistory(a.Context.SessionID, a.Context.PhilosopherName, 10)
+
 	data := map[string]interface{}{
-		"long_term":  a.Context.LongTermMemory,
-		"short_term": a.Context.ShortTermMemory,
+		"stats":           stats,
+		"recent_memories": recentMemories,
 	}
 	bytes, err := json.Marshal(data)
 	return string(bytes), err
 }
 
-// ClearShortTermMemory 清除短期记忆（新会话时调用）
+// ClearShortTermMemory 清除短期记忆（新会话时调用）- 已废弃
 func (a *Agent) ClearShortTermMemory() {
-	a.Context.ShortTermMemory = []MemoryItem{}
+	// 已废弃，短期记忆现在通过过期时间自动管理
+	// 如果需要清理，可以调用 a.MemoryManager.Cleanup()
+}
+
+// CleanupMemories 清理过期记忆
+func (a *Agent) CleanupMemories() error {
+	if a.MemoryManager != nil {
+		return a.MemoryManager.Cleanup()
+	}
+	return nil
+}
+
+// GetMemoryStats 获取记忆统计
+func (a *Agent) GetMemoryStats() (*MemoryStats, error) {
+	if a.MemoryManager == nil || a.Context.SessionID == "" {
+		return &MemoryStats{}, nil
+	}
+	return a.MemoryManager.GetMemoryStats(a.Context.SessionID)
 }

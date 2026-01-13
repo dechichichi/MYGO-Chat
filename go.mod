@@ -4,6 +4,7 @@ go 1.25.4
 
 require (
 	github.com/go-resty/resty/v2 v2.17.1
+	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/viper v1.21.0

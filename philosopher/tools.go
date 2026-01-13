@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // ==================== Agent 工具系统 ====================
@@ -35,23 +34,14 @@ type AgentContext struct {
 	PhilosopherType PhilosopherType
 	PhilosopherName string
 	UserID          string
+	SessionID       string
 	CurrentMood     string // 当前对话氛围
 
-	// 记忆系统
-	ShortTermMemory []MemoryItem // 短期记忆（当前会话）
-	LongTermMemory  []MemoryItem // 长期记忆（跨会话）
+	// 记忆系统（持久化）
+	MemoryManager *MemoryManager
 
 	// 对话历史摘要
 	ConversationSummary string
-}
-
-// MemoryItem 记忆条目
-type MemoryItem struct {
-	Timestamp  time.Time `json:"timestamp"`
-	Type       string    `json:"type"` // "fact", "emotion", "preference", "event"
-	Content    string    `json:"content"`
-	Importance float64   `json:"importance"` // 0-1，重要程度
-	RelatedTo  string    `json:"related_to"` // 关联的话题或人
 }
 
 // ==================== 工具定义 ====================
@@ -171,41 +161,28 @@ func handleRecallMemory(args map[string]interface{}, ctx *AgentContext) (string,
 		memoryType = "all"
 	}
 
-	var results []MemoryItem
-
-	// 搜索短期记忆
-	for _, m := range ctx.ShortTermMemory {
-		if memoryType != "all" && m.Type != memoryType {
-			continue
-		}
-		if strings.Contains(strings.ToLower(m.Content), strings.ToLower(query)) {
-			results = append(results, m)
-		}
+	if ctx.MemoryManager == nil {
+		return "记忆系统尚未初始化。", nil
 	}
 
-	// 搜索长期记忆
-	for _, m := range ctx.LongTermMemory {
-		if memoryType != "all" && m.Type != memoryType {
-			continue
-		}
-		if strings.Contains(strings.ToLower(m.Content), strings.ToLower(query)) {
-			results = append(results, m)
-		}
+	// 使用新的记忆系统进行搜索
+	memories, err := ctx.MemoryManager.RecallMemory(ctx.SessionID, ctx.PhilosopherName, query, 10)
+	if err != nil {
+		return "", fmt.Errorf("回忆记忆失败: %w", err)
 	}
 
-	if len(results) == 0 {
+	if len(memories) == 0 {
 		return "没有找到相关的记忆。这可能是我们第一次聊到这个话题。", nil
 	}
 
 	// 构建回忆结果
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("找到 %d 条相关记忆：\n", len(results)))
-	for i, m := range results {
+	sb.WriteString(fmt.Sprintf("找到 %d 条相关记忆：\n", len(memories)))
+	for i, memory := range memories {
 		if i >= 5 { // 最多返回5条
 			break
 		}
-		sb.WriteString(fmt.Sprintf("- [%s] %s (重要度: %.1f)\n",
-			m.Type, m.Content, m.Importance))
+		sb.WriteString(fmt.Sprintf("- [%s] %s\n", memory.Type, memory.Content))
 	}
 
 	return sb.String(), nil
@@ -220,19 +197,16 @@ func handleSaveMemory(args map[string]interface{}, ctx *AgentContext) (string, e
 		importance = 0.5
 	}
 
-	memory := MemoryItem{
-		Timestamp:  time.Now(),
-		Type:       memoryType,
-		Content:    content,
-		Importance: importance,
+	if ctx.MemoryManager == nil {
+		return "记忆系统尚未初始化。", nil
 	}
 
-	// 高重要度的存入长期记忆
-	if importance >= 0.7 {
-		ctx.LongTermMemory = append(ctx.LongTermMemory, memory)
+	// 使用新的记忆系统保存
+	err := ctx.MemoryManager.SaveImportantMemory(ctx.SessionID, ctx.PhilosopherName, content,
+		fmt.Sprintf(`{"type":"%s","importance":%.1f}`, memoryType, importance))
+	if err != nil {
+		return "", fmt.Errorf("保存记忆失败: %w", err)
 	}
-	// 所有记忆都存入短期记忆
-	ctx.ShortTermMemory = append(ctx.ShortTermMemory, memory)
 
 	return fmt.Sprintf("已记住：%s（类型：%s，重要度：%.1f）", content, memoryType, importance), nil
 }
@@ -324,8 +298,8 @@ func handleSenseAtmosphere(args map[string]interface{}, ctx *AgentContext) (stri
 		result.WriteString("建议：根据用户的情绪状态调整回应的温度和方式。")
 
 	case "topic":
-		// 从短期记忆中分析话题走向
-		topics := analyzeTopic(ctx.ShortTermMemory)
+		// 从记忆中分析话题走向
+		topics := analyzeTopic(ctx)
 		result.WriteString(fmt.Sprintf("话题走向：%s\n", topics))
 		result.WriteString("建议：可以顺着当前话题深入，或者适时引导到新的方向。")
 
@@ -337,7 +311,7 @@ func handleSenseAtmosphere(args map[string]interface{}, ctx *AgentContext) (stri
 
 	case "all":
 		result.WriteString(fmt.Sprintf("情绪基调：%s\n", ctx.CurrentMood))
-		result.WriteString(fmt.Sprintf("话题走向：%s\n", analyzeTopic(ctx.ShortTermMemory)))
+		result.WriteString(fmt.Sprintf("话题走向：%s\n", analyzeTopic(ctx)))
 		result.WriteString(fmt.Sprintf("关系状态：%s\n", analyzeRelationship(ctx)))
 	}
 
@@ -377,15 +351,21 @@ func handleReflectResponse(args map[string]interface{}, ctx *AgentContext) (stri
 
 // ==================== 辅助函数 ====================
 
-func analyzeTopic(memories []MemoryItem) string {
-	if len(memories) == 0 {
+func analyzeTopic(ctx *AgentContext) string {
+	if ctx.MemoryManager == nil {
+		return "记忆系统尚未初始化"
+	}
+
+	// 获取最近的对话历史
+	history, err := ctx.MemoryManager.GetConversationHistory(ctx.SessionID, ctx.PhilosopherName, 3)
+	if err != nil || len(history) == 0 {
 		return "刚开始对话，话题尚未展开"
 	}
 
 	// 简单分析最近的记忆
 	recentTopics := []string{}
-	for i := len(memories) - 1; i >= 0 && i >= len(memories)-3; i-- {
-		recentTopics = append(recentTopics, memories[i].Content)
+	for i := len(history) - 1; i >= 0 && i >= len(history)-3; i-- {
+		recentTopics = append(recentTopics, history[i].Content)
 	}
 
 	if len(recentTopics) > 0 {
@@ -395,8 +375,18 @@ func analyzeTopic(memories []MemoryItem) string {
 }
 
 func analyzeRelationship(ctx *AgentContext) string {
+	if ctx.MemoryManager == nil {
+		return "记忆系统尚未初始化"
+	}
+
+	// 获取记忆统计
+	stats, err := ctx.MemoryManager.GetMemoryStats(ctx.SessionID)
+	if err != nil {
+		return "无法获取关系状态"
+	}
+
 	// 根据长期记忆数量和互动深度判断关系
-	memoryCount := len(ctx.LongTermMemory)
+	memoryCount := stats.LongTermCount
 
 	if memoryCount == 0 {
 		return "初次见面，还在相互了解"
