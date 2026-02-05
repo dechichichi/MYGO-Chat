@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"agent/config"
+	"agent/react"
 )
 
 // ==================== 完整 Agent 实现 ====================
@@ -112,17 +113,33 @@ func (a *Agent) Chat(userMessage string, history []config.Message) (*AgentRespon
 	messages = append(messages, history...)
 	messages = append(messages, config.Message{Role: "user", Content: userMessage})
 
-	// 4. 准备工具（如果启用）
+	// 4. 使用 ReAct 框架：Thought -> Action -> Observation 循环
 	var tools []map[string]interface{}
 	if a.EnableTools {
 		tools = ToOpenAITools(GetAgentTools())
 	}
 
-	// 5. 调用模型（可能包含工具调用循环）
-	response, toolResults, err := a.invokeWithTools(messages, tools)
+	reactInput := &react.RunInput{
+		Model:       a.Model,
+		Executor:    a.reactToolExecutor(),
+		Tools:       tools,
+		Messages:    messages,
+		MaxSteps:    a.MaxToolCalls,
+		ReActPrompt: react.DefaultReActInstruction,
+	}
+	// 未启用工具时仍走 ReAct，但 tools 为空，模型会直接回复
+	if !a.EnableTools {
+		reactInput.Tools = nil
+	}
+
+	runResult, err := react.Run(reactInput)
 	if err != nil {
 		return nil, err
 	}
+	response := runResult.FinalAnswer
+
+	// 从 ReAct 步骤中提取工具调用记录，供兼容原有 ToolResults 字段
+	toolResults := a.toolResultsFromReActSteps(runResult.Steps)
 
 	// 6. 反思（如果启用）
 	var reflectionResult *ReflectionResult
@@ -156,6 +173,7 @@ func (a *Agent) Chat(userMessage string, history []config.Message) (*AgentRespon
 		Content:          response,
 		EmotionLevel:     emotionLevel,
 		ToolResults:      toolResults,
+		ReActSteps:       runResult.Steps,
 		ReflectionResult: reflectionResult,
 		Evaluations:      evaluations,
 	}, nil
@@ -166,6 +184,7 @@ type AgentResponse struct {
 	Content          string                 `json:"content"`
 	EmotionLevel     EmotionLevel           `json:"emotion_level"`
 	ToolResults      []ToolResult           `json:"tool_results,omitempty"`
+	ReActSteps       []react.Step           `json:"react_steps,omitempty"` // ReAct 推理步骤（Thought/Action/Observation）
 	ReflectionResult *ReflectionResult      `json:"reflection_result,omitempty"`
 	Evaluations      []SelfEvaluationResult `json:"evaluations,omitempty"`
 }
@@ -281,79 +300,30 @@ func (a *Agent) buildMemoryContext() string {
 	return context
 }
 
-// invokeWithTools 带工具调用的模型调用
-func (a *Agent) invokeWithTools(messages []config.Message, tools []map[string]interface{}) (string, []ToolResult, error) {
-	var toolResults []ToolResult
-	currentMessages := make([]config.Message, len(messages))
-	copy(currentMessages, messages)
+// reactToolExecutor 返回供 ReAct 循环使用的工具执行器
+func (a *Agent) reactToolExecutor() react.ToolExecutor {
+	return react.ToolExecutorFunc(func(toolName string, argsJSON string) (string, error) {
+		tc := ToolCall{Function: struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		}{Name: toolName, Arguments: argsJSON}}
+		return ExecuteTool(tc, a.Context)
+	})
+}
 
-	for i := 0; i < a.MaxToolCalls; i++ {
-		// 调用模型
-		content, toolCalls, err := a.Model.Invoke(currentMessages, tools)
-		if err != nil {
-			return "", toolResults, err
-		}
-
-		// 如果没有工具调用，返回内容
-		if len(toolCalls) == 0 {
-			return content, toolResults, nil
-		}
-
-		// 添加带有 tool_calls 的 assistant 消息
-		assistantMsg := config.Message{
-			Role:    "assistant",
-			Content: content,
-		}
-		// 转换 tool_calls
-		for _, tc := range toolCalls {
-			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, config.ToolCall{
-				ID:   tc.ID,
-				Type: tc.Type,
-				Function: struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				}{
-					Name:      tc.Function.Name,
-					Arguments: tc.Function.Arguments,
-				},
-			})
-		}
-		currentMessages = append(currentMessages, assistantMsg)
-
-		// 处理每个工具调用
-		for _, tc := range toolCalls {
-			// 转换工具调用格式
-			toolCall := ToolCall{
-				ID:   tc.ID,
-				Type: tc.Type,
-			}
-			toolCall.Function.Name = tc.Function.Name
-			toolCall.Function.Arguments = tc.Function.Arguments
-
-			// 执行工具
-			result, err := ExecuteTool(toolCall, a.Context)
-			if err != nil {
-				result = fmt.Sprintf("工具执行失败: %s", err.Error())
-			}
-
-			toolResults = append(toolResults, ToolResult{
-				ToolName: tc.Function.Name,
-				Input:    tc.Function.Arguments,
-				Output:   result,
-			})
-
-			// 添加工具结果消息（需要 tool_call_id）
-			currentMessages = append(currentMessages, config.Message{
-				Role:       "tool",
-				Content:    result,
-				ToolCallID: tc.ID,
+// toolResultsFromReActSteps 从 ReAct 步骤中提取 ToolResult 列表（兼容原有 API）
+func (a *Agent) toolResultsFromReActSteps(steps []react.Step) []ToolResult {
+	var out []ToolResult
+	for _, s := range steps {
+		if s.Action != nil {
+			out = append(out, ToolResult{
+				ToolName: s.Action.ToolName,
+				Input:    s.Action.Input,
+				Output:   s.Observation,
 			})
 		}
 	}
-
-	// 达到最大工具调用次数，最后再调用一次获取最终回复
-	finalContent, _, err := a.Model.Invoke(currentMessages, nil)
-	return finalContent, toolResults, err
+	return out
 }
 
 // SetUserID 设置用户 ID（用于区分不同用户的记忆）

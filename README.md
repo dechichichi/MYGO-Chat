@@ -99,11 +99,11 @@ func (a *EmotionAnalyzer) Analyze(text string) EmotionLevel {
 }
 ```
 
-### 2. 完整 Agent 能力：工具调用 + 记忆系统 + 反思机制
+### 2. ReAct 框架 + 工具调用 + 记忆系统 + 反思机制
 
-每个角色都是一个完整的 Agent，具备：
+Agent 采用 **ReAct**（Reasoning + Acting）模式：先**思考**（Thought）再**行动**（Action，如调用工具），根据**观察**（Observation）继续推理或给出最终回复。每个角色具备：
 
-**工具调用能力**：
+**工具调用能力**（在 ReAct 循环中按需调用）：
 - `recall_memory` - 回忆与用户的过往对话
 - `save_memory` - 保存重要信息到记忆
 - `search_lyrics` - 搜索歌词找灵感
@@ -120,13 +120,18 @@ func (a *EmotionAnalyzer) Analyze(text string) EmotionLevel {
 - 支持迭代优化直到达到目标质量
 
 ```go
-// Agent 工具调用循环
+// Agent 对话（ReAct 驱动）
 func (a *Agent) Chat(userMessage string, history []Message) (*AgentResponse, error) {
     // 1. 情绪分析
     emotionLevel := a.EmotionAnalyzer.Analyze(userMessage)
     
-    // 2. 调用模型（可能触发工具调用）
-    response, toolResults := a.invokeWithTools(messages, tools)
+    // 2. ReAct 循环：Thought → Action → Observation
+    runResult, _ := react.Run(&react.RunInput{
+        Model: a.Model, Executor: a.reactToolExecutor(),
+        Tools: tools, Messages: messages, MaxSteps: a.MaxToolCalls,
+        ReActPrompt: react.DefaultReActInstruction,
+    })
+    response := runResult.FinalAnswer
     
     // 3. 反思并优化
     if a.EnableReflection {
@@ -134,9 +139,9 @@ func (a *Agent) Chat(userMessage string, history []Message) (*AgentResponse, err
     }
     
     // 4. 保存到记忆
-    a.Context.ShortTermMemory = append(...)
+    a.MemoryManager.SaveConversation(...)
     
-    return response
+    return &AgentResponse{Content: response, ReActSteps: runResult.Steps, ...}
 }
 ```
 
@@ -240,6 +245,7 @@ curl -X POST http://localhost:8080/api/agent/discussion \
 ```
 mygo-chat/
 ├── main.go              # 入口文件
+├── react/               # ReAct 框架（推理-行动-观察循环）
 ├── config/
 │   ├── config.go        # 配置加载
 │   ├── config.yaml      # 配置文件
@@ -271,6 +277,37 @@ mygo-chat/
 - **后端**: Go, Gin, Viper, Resty
 - **前端**: React, TypeScript, TailwindCSS, Vite
 - **AI**: OpenAI Compatible API (支持 DeepSeek, 阿里云 DashScope 等)
+
+---
+
+## 简历与面试向说明（后端 / 大模型方向）
+
+本项目适合作为**后端开发 + 大模型应用**的作品展示。以下内容可直接用于简历或面试介绍，详细准备要点见 **[docs/求职准备.md](docs/求职准备.md)**。
+
+### 一句话项目描述（简历用）
+
+> 使用 Go 实现的、支持工具调用与持久化记忆的对话 Agent 系统，采用 ReAct（推理-行动-观察）框架驱动多轮推理，集成四层角色 Prompt、情绪感知、反思机制与多 API 容错。
+
+### 技术栈（简历列举）
+
+Go、Gin、OpenAI 兼容 API、ReAct Agent 框架、Function Calling（工具调用）、Prompt 工程、SQLite 记忆存储、多 API 容错、LRU 缓存
+
+### 核心亮点（面试可展开 2～3 条）
+
+| 亮点 | 一句话 |
+|------|--------|
+| **ReAct 框架** | 独立 `react` 包实现 Thought→Action→Observation 循环，Agent 统一经此驱动，支持多轮工具调用与步骤可追溯（`react_steps`）。 |
+| **工具调用与记忆** | 实现 recall_memory / save_memory / search_lyrics / sense_atmosphere 等工具，与 OpenAI Function Calling 对接，由 ToolExecutor 统一执行并注入 Observation。 |
+| **Prompt 与情绪** | 四层角色 Prompt + 两层情绪分析（规则 + LLM），在 system 中注入角色与 ReAct 行为说明，控制一致性与推理习惯。 |
+| **工程化** | 多 API 容错（主/备/兜底）、LRU 缓存、Jaccard 输出去重，兼顾可用性与成本。 |
+
+### 面试前建议
+
+- 能口头讲清：**ReAct 是什么、和「直接调一次 API」的区别、工具调用的协议与后端职责**。
+- 能指出代码位置：`react/loop.go` 的 Run 循环、`philosopher/agent.go` 的 Chat 与 `reactToolExecutor`、API 响应中的 `react_steps`。
+- 完整问答与一页项目说明见 **[docs/求职准备.md](docs/求职准备.md)**。
+
+---
 
 ## License
 

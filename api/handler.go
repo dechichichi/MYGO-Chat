@@ -8,6 +8,7 @@ import (
 
 	"agent/config"
 	"agent/philosopher"
+	"agent/react"
 
 	"github.com/rs/zerolog/log"
 )
@@ -470,6 +471,7 @@ type AgentChatResponse struct {
 	Philosopher      string                        `json:"philosopher"`
 	EmotionLevel     philosopher.EmotionLevel      `json:"emotion_level"`
 	ToolResults      []philosopher.ToolResult      `json:"tool_results,omitempty"`
+	ReActSteps       []react.Step                  `json:"react_steps,omitempty"`
 	ReflectionResult *philosopher.ReflectionResult `json:"reflection_result,omitempty"`
 	AgentEnabled     bool                          `json:"agent_enabled"`
 }
@@ -529,6 +531,7 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 		Philosopher:      agent.Name,
 		EmotionLevel:     result.EmotionLevel,
 		ToolResults:      result.ToolResults,
+		ReActSteps:       result.ReActSteps,
 		ReflectionResult: result.ReflectionResult,
 		AgentEnabled:     true,
 	}

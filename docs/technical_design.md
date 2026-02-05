@@ -491,13 +491,36 @@ func (d *ContentDeduplicator) jaccardSimilarity(a, b string) float64 {
 
 ## 三、Agent 系统设计
 
+### 3.0 ReAct 框架（agent/react）
+
+Agent 的推理与工具调用统一由 **ReAct**（Reasoning + Acting）框架驱动，核心逻辑在 `react` 包中：
+
+- **Thought（思考）**：模型先输出对本轮任务的推理（如是否需要查记忆、感知氛围等）。
+- **Action（行动）**：若需要则调用工具（名称 + 参数），否则直接回复。
+- **Observation（观察）**：工具执行结果作为观察反馈给模型，模型可继续 Thought → Action 或给出最终答案。
+
+```go
+// react 包核心类型
+type Step struct {
+    Thought     string   // 本轮推理
+    Action      *Action  // 工具调用（可选）
+    Observation string  // 工具返回
+}
+
+func Run(input *RunInput) (*RunResult, error)
+```
+
+- `RunInput`：Model（实现 `Invoke`）、ToolExecutor、Messages、Tools、MaxSteps、ReActPrompt。
+- `RunResult`：FinalAnswer、Steps（各轮 Thought/Action/Observation）。
+- 系统 Prompt 中通过 `ReActPrompt` 注入「先思考再决定是否调用工具」的说明，模型输出 `content` 视为 Thought，`tool_calls` 视为 Action；执行后把结果作为 Observation 追加到对话，循环直到模型不再调用工具或达到 MaxSteps。
+
 ### 3.1 Agent 工具调用循环
 
-实现标准 ReAct（Reasoning + Acting）模式，支持多轮工具调用直到任务完成：
+在 ReAct 框架下，Agent 的对话流程由 `react.Run()` 驱动，支持多轮 Thought → Action → Observation 直到任务完成：
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Agent 调用循环                          │
+│                      Agent 调用流程                          │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -511,13 +534,12 @@ func (d *ContentDeduplicator) jaccardSimilarity(a, b string) float64 {
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Step 2: 工具调用循环 (最多 10 轮)                           │
+│  Step 2: ReAct 循环 (react.Run，最多 MaxToolCalls 轮)        │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │  while hasToolCalls && iteration < maxIterations:       ││
-│  │      1. 调用 LLM，获取 response + tool_calls            ││
-│  │      2. 解析 tool_calls，执行对应工具                    ││
-│  │      3. 构造 tool 消息（带 tool_call_id）               ││
-│  │      4. 将结果加入上下文，继续推理                       ││
+│  │  Thought → 模型输出 content（推理）                     ││
+│  │  Action  → 若有 tool_calls，执行工具                    ││
+│  │  Observation → 工具结果加入上下文                       ││
+│  │  重复直到无 tool_calls 或达最大轮数，得到 FinalAnswer   ││
 │  └─────────────────────────────────────────────────────────┘│
 └─────────────────────────────┬───────────────────────────────┘
                               │
@@ -1208,6 +1230,10 @@ mygo-chat/
 ├── main.go                 # 入口文件
 ├── go.mod                  # Go 模块定义
 ├── go.sum                  # 依赖校验
+├── react/                  # ReAct 框架（Thought → Action → Observation）
+│   ├── types.go            # Model/Executor 接口、Step、RunInput/RunResult
+│   ├── prompt.go           # ReAct 行为说明
+│   └── loop.go             # Run() 循环
 ├── config/
 │   ├── config.go           # 配置加载
 │   ├── config.yaml         # 配置文件
